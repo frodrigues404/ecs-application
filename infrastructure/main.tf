@@ -30,94 +30,56 @@ resource "aws_ecr_repository" "dogs-app" {
   }
 }
 
-# Deploy ACM
-# https://registry.terraform.io/modules/terraform-aws-modules/acm/aws/5.0.1
-
-module "acm" {
-  source  = "terraform-aws-modules/acm/aws"
-  version = "5.0.1"
-
-  domain_name  = "my-domain.com"
-  zone_id      = "Z2ES7B9AZ6SHAE"
-
-  validation_method = "DNS"
-
-  subject_alternative_names = [
-    "*.my-domain.com",
-    "app.sub.my-domain.com",
-  ]
-
-  wait_for_validation = true
-
-  tags = {
-    Name = "my-domain.com"
-  }
-}
-
 # Deploy Application Load Balancer
 # https://registry.terraform.io/modules/terraform-aws-modules/alb/aws/9.9.0
 
-module "alb" {
-  source = "terraform-aws-modules/alb/aws"
-  version = "9.9.0"
+resource "aws_lb" "application_load_balancer" {
+  name               = "${local.project}-${local.environment}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.allow_http.id]
+  subnets            = module.vpc-dogs-app.public_subnets
 
-  name    = "${local.project}-${local.environment}-alb"
-  vpc_id  = module.vpc-dogs-app.vpc_id
-  subnets = module.vpc-dogs-app.public_subnets
-
-  # Security Group
-  security_group_ingress_rules = {
-    all_http = {
-      from_port   = 80
-      to_port     = 80
-      ip_protocol = "tcp"
-      description = "HTTP web traffic"
-      cidr_ipv4   = "0.0.0.0/0"
-    }
-    all_https = {
-      from_port   = 443
-      to_port     = 443
-      ip_protocol = "tcp"
-      description = "HTTPS web traffic"
-      cidr_ipv4   = "0.0.0.0/0"
-    }
-  }
-  security_group_egress_rules = {
-    all = {
-      ip_protocol = "-1"
-      cidr_ipv4   = "10.0.0.0/16"
-    }
-  }
-
-  listeners = {
-    ex-http-https-redirect = {
-      port     = 80
-      protocol = "HTTP"
-      redirect = {
-        port        = "443"
-        protocol    = "HTTPS"
-        status_code = "HTTP_301"
-      }
-    }
-    ex-https = {
-      port            = 443
-      protocol        = "HTTPS"
-      certificate_arn = "arn:aws:iam::123456789012:server-certificate/test_cert-123456789012"
-
-      forward = {
-        target_group_key = "ex-instance"
-      }
-    }
-  }
-
-  target_groups = {
-    dogs-tg = {
-      name_prefix      = "dog"
-      protocol         = "HTTP"
-      port             = 80
-      target_type      = "ip"
-    }
-  }
+  enable_deletion_protection = false
 
   tags = local.tags
+}
+
+resource "aws_lb_target_group" "dog_app_target_group" {
+  name     = "${local.project}-${local.environment}-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = module.vpc-dogs-app.vpc_id
+  health_check {
+    port     = 80
+    protocol = "HTTP"
+    path = "/healthcheck"
+  }
+}
+
+resource "aws_lb_listener" "dog_app_listener" {
+  load_balancer_arn = aws_lb.application_load_balancer.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.dog_app_target_group.arn
+  }
+}
+
+resource "aws_security_group" "allow_http" {
+  name        = "allow_http"
+  description = "Allow HTTP inbound traffic and all outbound traffic"
+  vpc_id      = module.vpc-dogs-app.vpc_id
+
+  tags = local.tags
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_http" {
+  security_group_id = aws_security_group.allow_http.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  ip_protocol       = "tcp"
+  to_port           = 80
 }
