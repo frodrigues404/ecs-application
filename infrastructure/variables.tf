@@ -16,6 +16,10 @@ locals {
     "10.0.103.0/24"
   ]
 
+  container_image = "010427274449.dkr.ecr.us-east-1.amazonaws.com/app-dogs-dev-dogs-app:latest"
+  container_port = 3000
+  container_name = "app-dogs-${local.environment}"
+  
   tags = {
     Environment = local.environment
     Project     = local.project
